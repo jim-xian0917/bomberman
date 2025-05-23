@@ -1,0 +1,305 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>彈彈的愛上遊戲系統</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-800 flex flex-col items-center justify-center min-h-screen">
+  <h1 class="text-4xl text-white font-bold mb-4">彈彈的愛上遊戲系統</h1>
+  <div id="gameCanvas" class="bg-white"></div>
+  <p id="gameStatus" class="text-white text-xl mt-4"></p>
+  <p class="text-white text-lg mt-2">操作：WASD/箭頭鍵移動，空白鍵放置炸彈，R鍵重新開始</p>
+
+  <script>
+    let gridSize = 40;
+    let rows = 11;
+    let cols = 13;
+    let player;
+    let bombs = [];
+    let explosions = [];
+    let enemies = [];
+    let map = [];
+    let gameOver = false;
+
+    function setup() {
+      let canvas = createCanvas(cols * gridSize, rows * gridSize);
+      canvas.parent('gameCanvas');
+      initializeGame();
+    }
+
+    function initializeGame() {
+      // Initialize map
+      map = [];
+      for (let i = 0; i < rows; i++) {
+        map[i] = [];
+        for (let j = 0; j < cols; j++) {
+          if (i === 0 || i === rows - 1 || j === 0 || j === cols - 1 || (i % 2 === 0 && j % 2 === 0)) {
+            map[i][j] = 'wall'; // Unbreakable wall
+          } else if (random() < 0.6 && !(i <= 2 && j <= 2)) {
+            map[i][j] = 'brick'; // Breakable brick
+          } else {
+            map[i][j] = 'empty';
+          }
+        }
+      }
+
+      // Initialize player
+      player = { x: 1, y: 1, size: gridSize * 0.8 };
+
+      // Initialize enemies
+      enemies = [];
+      for (let i = 0; i < 3; i++) {
+        let ex, ey;
+        do {
+          ex = floor(random(3, cols - 1));
+          ey = floor(random(3, rows - 1));
+        } while (map[ey][ex] !== 'empty' || (ex === 1 && ey === 1));
+        enemies.push({ x: ex, y: ey, size: gridSize * 0.6 });
+      }
+
+      bombs = [];
+      explosions = [];
+      gameOver = false;
+      document.getElementById('gameStatus').innerText = '';
+    }
+
+    function draw() {
+      background(200); // Grass-like background
+      drawMap();
+      drawPlayer();
+      drawBombs();
+      drawExplosions();
+      drawEnemies();
+      updateGame();
+    }
+
+    function drawMap() {
+      for (let i = 0; i < rows; i++) {
+        for (let j = 0; j < cols; j++) {
+          if (map[i][j] === 'wall') {
+            fill(100); // Gray for walls
+            rect(j * gridSize, i * gridSize, gridSize, gridSize);
+          } else if (map[i][j] === 'brick') {
+            fill(139, 69, 19); // Brown for bricks
+            rect(j * gridSize, i * gridSize, gridSize, gridSize);
+          }
+        }
+      }
+    }
+
+    function drawPlayer() {
+      if (!gameOver) {
+        fill(0, 0, 255); // Blue for player
+        ellipse((player.x + 0.5) * gridSize, (player.y + 0.5) * gridSize, player.size, player.size);
+      }
+    }
+
+    function drawBombs() {
+      for (let bomb of bombs) {
+        fill(0); // Black for bomb
+        ellipse((bomb.x + 0.5) * gridSize, (bomb.y + 0.5) * gridSize, gridSize * 0.7, gridSize * 0.7);
+      }
+    }
+
+    function drawExplosions() {
+      for (let explosion of explosions) {
+        fill(255, 165, 0); // Orange for explosion
+        // Center
+        rect(explosion.x * gridSize, explosion.y * gridSize, gridSize, gridSize);
+        // Up
+        for (let i = 1; i <= explosion.range; i++) {
+          if (explosion.y - i >= 0 && map[explosion.y - i][explosion.x] !== 'wall') {
+            rect(explosion.x * gridSize, (explosion.y - i) * gridSize, gridSize, gridSize);
+            if (map[explosion.y - i][explosion.x] === 'brick') break;
+          } else break;
+        }
+        // Down
+        for (let i = 1; i <= explosion.range; i++) {
+          if (explosion.y + i < rows && map[explosion.y + i][explosion.x] !== 'wall') {
+            rect(explosion.x * gridSize, (explosion.y + i) * gridSize, gridSize, gridSize);
+            if (map[explosion.y + i][explosion.x] === 'brick') break;
+          } else break;
+        }
+        // Left
+        for (let i = 1; i <= explosion.range; i++) {
+          if (explosion.x - i >= 0 && map[explosion.y][explosion.x - i] !== 'wall') {
+            rect((explosion.x - i) * gridSize, explosion.y * gridSize, gridSize, gridSize);
+            if (map[explosion.y][explosion.x - i] === 'brick') break;
+          } else break;
+        }
+        // Right
+        for (let i = 1; i <= explosion.range; i++) {
+          if (explosion.x + i < cols && map[explosion.y][explosion.x + i] !== 'wall') {
+            rect((explosion.x + i) * gridSize, explosion.y * gridSize, gridSize, gridSize);
+            if (map[explosion.y][explosion.x + i] === 'brick') break;
+          } else break;
+        }
+      }
+    }
+
+    function drawEnemies() {
+      for (let enemy of enemies) {
+        fill(255, 0, 0); // Red for enemies
+        ellipse((enemy.x + 0.5) * gridSize, (enemy.y + 0.5) * gridSize, enemy.size, enemy.size);
+      }
+    }
+
+    function updateGame() {
+      if (gameOver) return;
+
+      // Update bombs
+      for (let i = bombs.length - 1; i >= 0; i--) {
+        bombs[i].timer--;
+        if (bombs[i].timer <= 0) {
+          explosions.push({ x: bombs[i].x, y: bombs[i].y, range: 2, timer: 30 });
+          bombs.splice(i, 1);
+        }
+      }
+
+      // Update explosions
+      for (let i = explosions.length - 1; i >= 0; i--) {
+        explosions[i].timer--;
+        if (explosions[i].timer <= 0) {
+          // Destroy bricks
+          let ex = explosions[i].x;
+          let ey = explosions[i].y;
+          if (map[ey][ex] === 'brick') map[ey][ex] = 'empty';
+          for (let j = 1; j <= explosions[i].range; j++) {
+            if (ey - j >= 0 && map[ey - j][ex] === 'brick') map[ey - j][ex] = 'empty';
+            if (ey + j < rows && map[ey + j][ex] === 'brick') map[ey + j][ex] = 'empty';
+            if (ex - j >= 0 && map[ey][ex - j] === 'brick') map[ey][ex - j] = 'empty';
+            if (ex + j < cols && map[ey][ex + j] === 'brick') map[ey][ex + j] = 'empty';
+          }
+          explosions.splice(i, 1);
+        }
+      }
+
+      // Check player collision with explosions
+      for (let explosion of explosions) {
+        if (isInExplosion(player.x, player.y, explosion)) {
+          gameOver = true;
+          document.getElementById('gameStatus').innerText = 'Game Over! Press R to restart';
+        }
+      }
+
+      // Update enemies
+      for (let enemy of enemies) {
+        if (frameCount % 30 === 0) {
+          let directions = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+          let dir = random(directions);
+          let newX = enemy.x + dir[0];
+          let newY = enemy.y + dir[1];
+          if (newX >= 0 && newX < cols && newY >= 0 && newY < rows && map[newY][newX] === 'empty') {
+            enemy.x = newX;
+            enemy.y = newY;
+          }
+        }
+        if (floor(enemy.x) === player.x && floor(enemy.y) === player.y) {
+          gameOver = true;
+          document.getElementById('gameStatus').innerText = 'Game Over! Press R to restart';
+        }
+      }
+    }
+
+    function isInExplosion(x, y, explosion) {
+      if (floor(x) === explosion.x && floor(y) === explosion.y) return true;
+      for (let i = 1; i <= explosion.range; i++) {
+        if (explosion.y - i >= 0 && map[explosion.y - i][explosion.x] !== 'wall') {
+          if (floor(x) === explosion.x && floor(y) === explosion.y - i) return true;
+          if (map[explosion.y - i][explosion.x] === 'brick') break;
+        } else break;
+      }
+      for (let i = 1; i <= explosion.range; i++) {
+        if (explosion.y + i < rows && map[explosion.y + i][explosion.x] !== 'wall') {
+          if (floor(x) === explosion.x && floor(y) === explosion.y + i) return true;
+          if (map[explosion.y + i][explosion.x] === 'brick') break;
+        } else break;
+      }
+      for (let i = 1; i <= explosion.range; i++) {
+        if (explosion.x - i >= 0 && map[explosion.y][explosion.x - i] !== 'wall') {
+          if (floor(x) === explosion.x - i && floor(y) === explosion.y) return true;
+          if (map[explosion.y][explosion.x - i] === 'brick') break;
+        } else break;
+      }
+      for (let i = 1; i <= explosion.range; i++) {
+        if (explosion.x + i < cols && map[explosion.y][explosion.x + i] !== 'wall') {
+          if (floor(x) === explosion.x + i && floor(y) === explosion.y) return true;
+          if (map[explosion.y][explosion.x + i] === 'brick') break;
+        } else break;
+      }
+      return false;
+    }
+
+    function keyPressed() {
+      if (gameOver && key === 'r' || key === 'R') {
+        initializeGame();
+        return;
+      }
+      if (gameOver) return;
+
+      let newX = player.x;
+      let newY = player.y;
+
+      if (key === 'w' || key === 'W' || keyCode === UP_ARROW) newY--;
+      if (key === 's' || key === 'S' || keyCode === DOWN_ARROW) newY++;
+      if (key === 'a' || key === 'A' || keyCode === LEFT_ARROW) newX--;
+      if (key === 'd' || key === 'D' || keyCode === RIGHT_ARROW) newX++;
+
+      if (newX >= 0 && newX < cols && newY >= 0 && newY < rows && map[newY][newX] === 'empty') {
+        player.x = newX;
+        player.y = newY;
+      }
+
+      if (key === ' ') {
+        let bombX = floor(player.x);
+        let bombY = floor(player.y);
+        if (!bombs.some(b => b.x === bombX && b.y === bombY)) {
+          bombs.push({ x: bombX, y: bombY, timer: 120 }); // 2 seconds at 60 FPS
+        }
+      }
+    }
+  </script>
+</body>
+</html>
